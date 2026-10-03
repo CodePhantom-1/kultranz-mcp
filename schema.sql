@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS salary_data (
+  job_title TEXT NOT NULL,
+  job_code TEXT NOT NULL,
+  city TEXT NOT NULL,
+  state TEXT NOT NULL,
+  avg_salary REAL,
+  salary_10th REAL,
+  salary_25th REAL,
+  salary_median REAL,
+  salary_75th REAL,
+  salary_90th REAL,
+  national_avg REAL,
+  employment INTEGER,
+  rpp_all_items REAL,
+  median_rent REAL,
+  median_home_value REAL,
+  city_median_income REAL,
+  city_population INTEGER,
+  data_quality_score INTEGER DEFAULT 0
+);

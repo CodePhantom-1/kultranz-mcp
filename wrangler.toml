@@ -1,0 +1,53 @@
+name = "kultranz-api"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Route the Worker onto a subdomain you own (already on Cloudflare).
+# Requires a DNS record + Worker route binding configured in the dashboard,
+# OR the `routes` block below once the custom hostname is verified.
+routes = [
+  { pattern = "api.kultranz.com", custom_domain = true }
+]
+
+# D1 — created via `npx wrangler d1 create kultranz`.
+# id returned by wrangler; binding name exposed to the Worker as `env.DB`.
+[[d1_databases]]
+binding = "DB"
+database_name = "kultranz"
+database_id = "a9c497cf-1d5d-4e75-9099-5ef83316086d"
+
+# RapidAPI proxy-secret verification (opt-in).
+# Get the secret from your RapidAPI Provider Hub → API Settings.
+# Set it via: npx wrangler secret put RAPIDAPI_PROXY_SECRET --config api/wrangler.toml
+# Once set, the Worker rejects direct hits that bypass RapidAPI.
+# [vars]
+# RAPIDAPI_PROXY_SECRET = ""
+
+# MCP server access key (opt-in, independent of the RapidAPI gate above).
+# When set, POST /mcp requires the key via `Authorization: Bearer <key>` or
+# `X-RapidAPI-Proxy-Secret: <key>`. Unset = /mcp stays open; it only exposes
+# what kultranz.com's public calculators already give away.
+# Set via: npx wrangler secret put MCP_API_KEY --config api/wrangler.toml
+
+# Billing: Polar "Kultranz Data Pass — $5 lifetime" (org ddmarketer, product
+# 5c66c3b2-8151-4b8c-81e0-8591c819e25e with a license_keys benefit).
+# BOTH secrets must be set to switch the billing tier on; while either is
+# unset, GET /billing/buy answers 503 and license keys are ignored — the
+# RapidAPI gate behaves exactly as before the billing launch.
+# Set via:
+#   npx wrangler secret put POLAR_ACCESS_TOKEN --config api/wrangler.toml
+#   npx wrangler secret put POLAR_PRODUCT_ID   --config api/wrangler.toml
+# Once set:
+#   - GET /billing/buy 302-redirects to a freshly minted Polar checkout
+#     (sessions expire in 24h, so none are cached).
+#   - `Authorization: Bearer <license-key>` / `X-Api-Key: <license-key>` is
+#     validated against Polar (verdict cached in D1 for 24h, key stored as a
+#     SHA-256 hash) → unlimited access, no RapidAPI gate, no rate limit.
+#   - Anonymous direct requests get the free tier: 25 GET requests/day per
+#     hashed IP (429 past that, pointing at /billing/buy).
+# The Worker lazily creates its own D1 tables (no migration needed):
+#   licenses(key_hash TEXT PRIMARY KEY, status TEXT, validated_at INTEGER)
+#   api_usage(ip_hash TEXT, day TEXT, count INTEGER, PRIMARY KEY(ip_hash, day))
+
+# Wrangler bundles TS + JSON imports via esbuild directly; no build step needed.

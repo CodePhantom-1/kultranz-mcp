@@ -1,0 +1,487 @@
+openapi: 3.0.3
+info:
+  title: Kultranz API
+  version: "0.1.0"
+  description: >
+    US personal-finance data + calculators backed by real government sources
+    (BLS OEWS, BEA Regional Price Parities, U.S. Census ACS, IRS 2026 brackets).
+    Free tier: 100 requests/day. No auth required — keys/metering handled by RapidAPI.
+  contact:
+    name: Kultranz
+    url: https://kultranz.com
+servers:
+  - url: https://api.kultranz.com
+    description: Production
+components:
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }
+    Meta:
+      type: object
+      properties:
+        source: { type: string }
+        vintage: { type: string }
+        year: { type: integer }
+  securitySchemes: {}
+security: []
+paths:
+  /paycheck:
+    get:
+      summary: Take-home pay by US state (2026)
+      description: Federal + FICA + state income tax. Single or married filing jointly.
+      parameters:
+        - { name: salary,         in: query, required: true,  schema: { type: number }, example: "120000" }
+        - { name: state,          in: query, required: true,  schema: { type: string }, description: "2-letter code (CA, NY, DC...)", example: "CA" }
+        - { name: filingStatus,   in: query, required: false, schema: { type: string, enum: [single, mfj] }, example: "single" }
+        - { name: pretax401k,     in: query, required: false, schema: { type: number }, example: "10000" }
+      responses:
+        "200":
+          description: Take-home breakdown
+          content:
+            application/json:
+              example:
+                    data:
+                      gross: 120000
+                      pretax: 10000
+                      taxable_income: 93900
+                      federal_tax: 15370
+                      social_security: 7440
+                      medicare: 1740
+                      state_tax: 6153.42
+                      total_tax: 30703.42
+                      net: 79296.58
+                      effective_rate: 25.59
+                    meta:
+                      source: BLS OEWS + BEA RPP + U.S. Census ACS + IRS (via kultranz.com)
+                      vintage: '2026'
+                      year: 2026
+  /cost-of-living:
+    get:
+      summary: Compare cost of living between two US metros
+      parameters:
+        - { name: fromCity, in: query, required: true, schema: { type: string }, description: "City, ST e.g. Austin, TX", example: "Austin, TX" }
+        - { name: toCity,   in: query, required: true, schema: { type: string }, example: "San Francisco, CA" }
+        - { name: salary,   in: query, required: false, schema: { type: number, default: 100000 }, example: "120000" }
+        - { name: rich,     in: query, required: false, schema: { type: string, enum: ["1"] }, description: "Include per-category monthly breakdown", example: "1" }
+      responses:
+        "200":
+          description: Equivalent salary + cost-of-living gap
+          content:
+            application/json:
+              example:
+                    data:
+                      from:
+                        city: Austin, TX
+                        rpp: 98.1
+                      to:
+                        city: San Francisco, CA
+                        rpp: 115.6
+                      equivalent_salary: 117838.94
+                      gap_pct: 17.84
+                    meta:
+                      source: BLS OEWS + BEA RPP + U.S. Census ACS + IRS (via kultranz.com)
+                      vintage: '2026'
+                      year: 2026
+  /tax-brackets:
+    get:
+      summary: Federal + state tax brackets (2026)
+      parameters:
+        - { name: state,        in: query, required: false, schema: { type: string }, example: "CA" }
+        - { name: filingStatus, in: query, required: false, schema: { type: string, enum: [single, mfj] }, example: "single" }
+      responses:
+        "200":
+          description: Brackets + standard deduction
+          content:
+            application/json:
+              example:
+                    data:
+                      federal:
+                        standard_deduction: 16100
+                        brackets:
+                        - - 0
+                          - 0.1
+                        - - 12400
+                          - 0.12
+                        - - 50400
+                          - 0.22
+                        - - 105700
+                          - 0.24
+                        - - 201775
+                          - 0.32
+                        - - 256225
+                          - 0.35
+                        - - 640600
+                          - 0.37
+                      state:
+                        code: NY
+                        type: progressive
+                        standard_deduction:
+                          single: 8000
+                          mfj: 16050
+                        brackets:
+                          single:
+                          - - 0
+                            - 0.039
+                          - - 8500
+                            - 0.044
+                          - - 11700
+                            - 0.0515
+                          - - 13900
+                            - 0.054
+                          - - 80650
+                            - 0.059
+                          - - 215400
+                            - 0.0685
+                          - - 1077550
+                            - 0.0965
+                          - - 5000000
+                            - 0.103
+                          - - 25000000
+                            - 0.109
+                          mfj:
+                          - - 0
+                            - 0.039
+                          - - 17150
+                            - 0.044
+                          - - 23600
+                            - 0.0515
+                          - - 27900
+                            - 0.054
+                          - - 161550
+                            - 0.059
+                          - - 323200
+                            - 0.0685
+                          - - 2155350
+                            - 0.0965
+                          - - 5000000
+                            - 0.103
+                          - - 25000000
+                            - 0.109
+                    meta:
+                      source: BLS OEWS + BEA RPP + U.S. Census ACS + IRS (via kultranz.com)
+                      vintage: '2026'
+                      year: 2026
+  /col-index:
+    get:
+      summary: Raw BEA Regional Price Parity index for 50 US metros
+      parameters:
+        - { name: city, in: query, required: false, schema: { type: string }, description: "Filter to one city", example: "Albuquerque, NM" }
+      responses:
+        "200":
+          description: City → RPP/rent/home/income
+          content:
+            application/json:
+              example:
+                    data:
+                      city: Albuquerque, NM
+                      rpp: 95.5
+                      rpp_rents: null
+                      median_rent: 1085
+                      median_home_value: 266700
+                      median_income: 65604
+                    meta:
+                      source: BLS OEWS + BEA RPP + U.S. Census ACS + IRS (via kultranz.com)
+                      vintage: '2026'
+                      year: 2026
+  /compound-interest:
+    get:
+      summary: Future value of an investment
+      parameters:
+        - { name: principal, in: query, required: true,  schema: { type: number }, example: "10000" }
+        - { name: monthly,   in: query, required: false, schema: { type: number, default: 0 }, example: "500" }
+        - { name: rate,      in: query, required: true,  schema: { type: number }, description: "Annual %", example: "7" }
+        - { name: years,     in: query, required: true,  schema: { type: integer }, example: "20" }
+      responses:
+        "200":
+          description: Final balance + yearly series
+          content:
+            application/json:
+              example:
+                    data:
+                      principal: 10000
+                      monthly: 500
+                      rate: 7
+                      years: 20
+                      final_balance: 300850.72
+                      total_contributed: 130000
+                      interest_earned: 170850.72
+                      return_multiple: 2.31
+                      series:
+                      - year: 0
+                        total: 10000
+                        contributed: 10000
+                      - year: 1
+                        total: 16919.19345338256
+                        contributed: 16000
+                      - year: 2
+                        total: 24338.57596097009
+                        contributed: 22000
+                      - year: 3
+                        total: 32294.306229934456
+                        contributed: 28000
+                      - year: 4
+                        total: 40825.15688331267
+                        contributed: 34000
+                      - year: 5
+                        total: 49972.70342019606
+                        contributed: 40000
+                      - year: 6
+                        total: 59781.526835866935
+                        contributed: 46000
+                      - year: 7
+                        total: 70299.43088936119
+                        contributed: 52000
+                      - year: 8
+                        total: 81577.67507732069
+                        contributed: 58000
+                      - year: 9
+                        total: 93671.22444954417
+                        contributed: 64000
+                      - year: 10
+                        total: 106639.01748372454
+                        contributed: 70000
+                      - year: 11
+                        total: 120544.25332487274
+                        contributed: 76000
+                      - year: 12
+                        total: 135454.69978930257
+                        contributed: 82000
+                      - year: 13
+                        total: 151443.02363424862
+                        contributed: 88000
+                      - year: 14
+                        total: 168587.14470270148
+                        contributed: 94000
+                      - year: 15
+                        total: 186970.61566940192
+                        contributed: 100000
+                      - year: 16
+                        total: 206683.02923870343
+                        contributed: 106000
+                      - year: 17
+                        total: 227820.45477880127
+                        contributed: 112000
+                      - year: 18
+                        total: 250485.90652028547
+                        contributed: 118000
+                      - year: 19
+                        total: 274789.84560080466
+                        contributed: 124000
+                      - year: 20
+                        total: 300850.71840257966
+                        contributed: 130000
+                    meta:
+                      source: BLS OEWS + BEA RPP + U.S. Census ACS + IRS (via kultranz.com)
+                      vintage: '2026'
+                      year: 2026
+  /net-worth:
+    get:
+      summary: Net worth from assets and liabilities
+      parameters:
+        - { name: cash, in: query, required: false, schema: { type: number, default: 0 }, example: "10000" }
+        - { name: investments, in: query, required: false, schema: { type: number, default: 0 }, example: "150000" }
+        - { name: property, in: query, required: false, schema: { type: number, default: 0 }, example: "400000" }
+        - { name: mortgage, in: query, required: false, schema: { type: number, default: 0 }, example: "380000" }
+        - { name: car, in: query, required: false, schema: { type: number, default: 0 }, example: "15000" }
+        - { name: credit, in: query, required: false, schema: { type: number, default: 0 }, example: "5000" }
+        - { name: otherAssets, in: query, required: false, schema: { type: number, default: 0 }, description: "Any other assets" }
+        - { name: otherDebt, in: query, required: false, schema: { type: number, default: 0 }, description: "Any other liabilities" }
+      responses:
+        "200":
+          description: assets, liabilities, net_worth
+          content:
+            application/json:
+              example:
+                    data:
+                      assets: 560000
+                      liabilities: 400000
+                      net_worth: 160000
+                    meta:
+                      source: BLS OEWS + BEA RPP + U.S. Census ACS + IRS (via kultranz.com)
+                      vintage: '2026'
+                      year: 2026
+  /debt-payoff:
+    get:
+      summary: Debt payoff schedule (avalanche, snowball, or both)
+      parameters:
+        - { name: debts, in: query, required: true, schema: { type: string }, description: "JSON array [{name,balance,rate,min}]", example: "[{\"name\":\"Card\",\"balance\":5000,\"rate\":22,\"min\":150}]" }
+        - { name: extra, in: query, required: false, schema: { type: number, default: 0 }, example: "200" }
+        - { name: mode,  in: query, required: false, schema: { type: string, enum: [avalanche, snowball, both] }, description: "both returns side-by-side comparison + avalanche_savings", example: "avalanche" }
+      responses:
+        "200":
+          description: months, total_interest, schedule (+ snowball/avalanche/avalanche_savings if both)
+          content:
+            application/json:
+              example:
+                    data:
+                      months: 17
+                      total_interest: 851.2
+                      payoff_display: 1y 5m
+                      stalled: false
+                      schedule:
+                      - month: 1
+                        balance: 4741.666666666667
+                        payment: 441.6666666666667
+                        interest: 91.66666666666667
+                        principal: 350
+                      - month: 2
+                        balance: 4478.597222222223
+                        payment: 436.93055555555554
+                        interest: 86.93055555555556
+                        principal: 350
+                      - month: 3
+                        balance: 4210.704837962963
+                        payment: 432.10761574074075
+                        interest: 82.10761574074075
+                        principal: 350
+                      - month: 4
+                        balance: 3937.9010933256177
+                        payment: 427.1962553626543
+                        interest: 77.19625536265433
+                        principal: 350
+                      - month: 5
+                        balance: 3660.095946703254
+                        payment: 422.1948533776363
+                        interest: 72.19485337763632
+                        principal: 350
+                      - month: 6
+                        balance: 3377.197705726147
+                        payment: 417.101759022893
+                        interest: 67.10175902289299
+                        principal: 350
+                      - month: 7
+                        balance: 3089.112996997793
+                        payment: 411.915291271646
+                        interest: 61.915291271646026
+                        principal: 350
+                      - month: 8
+                        balance: 2795.746735276086
+                        payment: 406.63373827829287
+                        interest: 56.63373827829287
+                        principal: 350
+                      - month: 9
+                        balance: 2497.002092089481
+                        payment: 401.2553568133949
+                        interest: 51.25535681339491
+                        principal: 350
+                      - month: 10
+                        balance: 2192.780463777788
+                        payment: 395.7783716883072
+                        interest: 45.778371688307146
+                        principal: 350
+                      - month: 11
+                        balance: 1882.9814389470475
+                        payment: 390.20097516925944
+                        interest: 40.20097516925945
+                        principal: 350
+                      - month: 12
+                        balance: 1567.5027653277434
+                        payment: 384.5213263806959
+                        interest: 34.521326380695875
+                        principal: 350
+                      - month: 13
+                        balance: 1246.2403160254187
+                        payment: 378.7375506976753
+                        interest: 28.737550697675296
+                        principal: 350
+                      - month: 14
+                        balance: 919.0880551525513
+                        payment: 372.8477391271327
+                        interest: 22.847739127132677
+                        principal: 350
+                      - month: 15
+                        balance: 585.9380028303481
+                        payment: 366.84994767779676
+                        interest: 16.849947677796774
+                        principal: 350
+                      - month: 16
+                        balance: 246.6801995489044
+                        payment: 360.7421967185564
+                        interest: 10.74219671855638
+                        principal: 350
+                      - month: 17
+                        balance: 0
+                        payment: 255.72514019903088
+                        interest: 4.522470325063248
+                        principal: 251.20266987396764
+                    meta:
+                      source: BLS OEWS + BEA RPP + U.S. Census ACS + IRS (via kultranz.com)
+                      vintage: '2026'
+                      year: 2026
+  /budget:
+    get:
+      summary: Budget — simple 50/30/20 split or full custom-category budget
+      description: >
+        If any category param (housing, food, transport, utilities, insurance, debt, savings, other)
+        is present, returns the full per-category breakdown matching the website calculator.
+        Otherwise returns a simple 50/30/20 split.
+      parameters:
+        - { name: income, in: query, required: true, schema: { type: number }, example: "5000" }
+        - { name: savingsPct, in: query, required: false, schema: { type: number }, description: "Simple mode only — override default 20%", example: "20" }
+        - { name: housing, in: query, required: false, schema: { type: number, default: 0 } }
+        - { name: food, in: query, required: false, schema: { type: number, default: 0 } }
+        - { name: transport, in: query, required: false, schema: { type: number, default: 0 } }
+        - { name: utilities, in: query, required: false, schema: { type: number, default: 0 } }
+        - { name: insurance, in: query, required: false, schema: { type: number, default: 0 } }
+        - { name: debt, in: query, required: false, schema: { type: number, default: 0 }, description: "Debt payments" }
+        - { name: savings, in: query, required: false, schema: { type: number, default: 0 }, description: "Savings & investments" }
+        - { name: other, in: query, required: false, schema: { type: number, default: 0 }, description: "Entertainment, subscriptions" }
+      responses:
+        "200":
+          description: "Simple: needs/wants/savings. Full: categories[], total_expenses, surplus, percentages."
+          content:
+            application/json:
+              example:
+                    data:
+                      income: 5000
+                      needs: 2500
+                      wants: 1500
+                      savings: 1000
+                      savings_pct: 20
+                    meta:
+                      source: BLS OEWS + BEA RPP + U.S. Census ACS + IRS (via kultranz.com)
+                      vintage: '2026'
+                      year: 2026
+  /salaries:
+    get:
+      summary: Real salary data by job and/or city (BLS OEWS)
+      parameters:
+        - { name: job,   in: query, required: false, schema: { type: string }, example: "nurse" }
+        - { name: city,  in: query, required: false, schema: { type: string }, example: "Albuquerque, NM" }
+        - { name: state, in: query, required: false, schema: { type: string }, example: "CA" }
+      responses:
+        "200":
+          description: Up to 100 matching salary records with percentiles + city COL data
+          content:
+            application/json:
+              example:
+                    data:
+                      count: 1
+                      records:
+                      - job_title: Registered Nurse
+                        job_code: null
+                        city: Chicago
+                        state: IL
+                        avg_salary: 90810.0
+                        salary_10th: 67560.0
+                        salary_25th: 79590.0
+                        salary_median: 85160.0
+                        salary_75th: 102440.0
+                        salary_90th: 107980.0
+                        national_avg: 94480.0
+                        employment: 102330
+                        rpp_all_items: null
+                        median_rent: 1380.0
+                        median_home_value: 315200.0
+                        city_median_income: 75134.0
+                        city_population: 2707648
+                    meta:
+                      source: BLS OEWS + BEA RPP + U.S. Census ACS + IRS (via kultranz.com)
+                      vintage: '2026'
+                      year: 2026

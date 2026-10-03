@@ -1,0 +1,358 @@
+{
+  "_meta": {
+    "source": "BEA Regional Price Parities (via FRED) + U.S. Census ACS",
+    "note": "rpp: all-items cost-of-living index, US national = 100."
+  },
+  "cities": {
+    "Albuquerque, NM": {
+      "rpp": 95.5,
+      "rpp_rents": null,
+      "median_rent": 1085.0,
+      "median_home_value": 266700.0,
+      "median_income": 65604.0
+    },
+    "Arlington, TX": {
+      "rpp": 103.1,
+      "rpp_rents": null,
+      "median_rent": null,
+      "median_home_value": null,
+      "median_income": null
+    },
+    "Atlanta, GA": {
+      "rpp": 100.1,
+      "rpp_rents": null,
+      "median_rent": 1617.0,
+      "median_home_value": 420600.0,
+      "median_income": 81938.0
+    },
+    "Austin, TX": {
+      "rpp": 98.1,
+      "rpp_rents": null,
+      "median_rent": 1655.0,
+      "median_home_value": 512700.0,
+      "median_income": 91461.0
+    },
+    "Baltimore, MD": {
+      "rpp": 104.5,
+      "rpp_rents": null,
+      "median_rent": 1290.0,
+      "median_home_value": 219300.0,
+      "median_income": 59623.0
+    },
+    "Boston, MA": {
+      "rpp": 108.3,
+      "rpp_rents": null,
+      "median_rent": 2093.0,
+      "median_home_value": 710400.0,
+      "median_income": 94755.0
+    },
+    "Charlotte, NC": {
+      "rpp": 97.3,
+      "rpp_rents": null,
+      "median_rent": 1504.0,
+      "median_home_value": 351500.0,
+      "median_income": 78438.0
+    },
+    "Chicago, IL": {
+      "rpp": 103.6,
+      "rpp_rents": null,
+      "median_rent": 1380.0,
+      "median_home_value": 315200.0,
+      "median_income": 75134.0
+    },
+    "Cleveland, OH": {
+      "rpp": 93.0,
+      "rpp_rents": null,
+      "median_rent": null,
+      "median_home_value": null,
+      "median_income": null
+    },
+    "Colorado Springs, CO": {
+      "rpp": 100.7,
+      "rpp_rents": null,
+      "median_rent": 1562.0,
+      "median_home_value": 420700.0,
+      "median_income": 83198.0
+    },
+    "Columbus, OH": {
+      "rpp": 95.5,
+      "rpp_rents": null,
+      "median_rent": 1224.0,
+      "median_home_value": 234500.0,
+      "median_income": 65327.0
+    },
+    "Dallas, TX": {
+      "rpp": 103.1,
+      "rpp_rents": null,
+      "median_rent": 1403.0,
+      "median_home_value": 295300.0,
+      "median_income": 67760.0
+    },
+    "Denver, CO": {
+      "rpp": 105.8,
+      "rpp_rents": null,
+      "median_rent": 1770.0,
+      "median_home_value": 586700.0,
+      "median_income": 91681.0
+    },
+    "Detroit, MI": {
+      "rpp": 100.3,
+      "rpp_rents": null,
+      "median_rent": 1034.0,
+      "median_home_value": 76800.0,
+      "median_income": 39575.0
+    },
+    "El Paso, TX": {
+      "rpp": 89.9,
+      "rpp_rents": null,
+      "median_rent": 1041.0,
+      "median_home_value": 171700.0,
+      "median_income": 58734.0
+    },
+    "Fort Worth, TX": {
+      "rpp": 103.1,
+      "rpp_rents": null,
+      "median_rent": 1412.0,
+      "median_home_value": 277300.0,
+      "median_income": 76602.0
+    },
+    "Fresno, CA": {
+      "rpp": 102.2,
+      "rpp_rents": null,
+      "median_rent": 1324.0,
+      "median_home_value": 348500.0,
+      "median_income": 66804.0
+    },
+    "Houston, TX": {
+      "rpp": 98.6,
+      "rpp_rents": null,
+      "median_rent": 1313.0,
+      "median_home_value": 253400.0,
+      "median_income": 62894.0
+    },
+    "Indianapolis, IN": {
+      "rpp": 95.7,
+      "rpp_rents": null,
+      "median_rent": 1112.0,
+      "median_home_value": 207000.0,
+      "median_income": 62995.0
+    },
+    "Jacksonville, FL": {
+      "rpp": 99.5,
+      "rpp_rents": null,
+      "median_rent": 1375.0,
+      "median_home_value": 266100.0,
+      "median_income": 66981.0
+    },
+    "Kansas City, MO": {
+      "rpp": 92.5,
+      "rpp_rents": null,
+      "median_rent": 1186.0,
+      "median_home_value": 227000.0,
+      "median_income": 67449.0
+    },
+    "Las Vegas, NV": {
+      "rpp": 100.2,
+      "rpp_rents": null,
+      "median_rent": 1456.0,
+      "median_home_value": 395300.0,
+      "median_income": 70723.0
+    },
+    "Long Beach, CA": {
+      "rpp": 113.6,
+      "rpp_rents": null,
+      "median_rent": null,
+      "median_home_value": null,
+      "median_income": null
+    },
+    "Los Angeles, CA": {
+      "rpp": 113.6,
+      "rpp_rents": null,
+      "median_rent": 1879.0,
+      "median_home_value": 879500.0,
+      "median_income": 80366.0
+    },
+    "Louisville, KY": {
+      "rpp": 93.1,
+      "rpp_rents": null,
+      "median_rent": 1069.0,
+      "median_home_value": 221500.0,
+      "median_income": 64731.0
+    },
+    "Memphis, TN": {
+      "rpp": 92.2,
+      "rpp_rents": null,
+      "median_rent": 1123.0,
+      "median_home_value": 157100.0,
+      "median_income": 51211.0
+    },
+    "Mesa, AZ": {
+      "rpp": 103.3,
+      "rpp_rents": null,
+      "median_rent": null,
+      "median_home_value": null,
+      "median_income": null
+    },
+    "Miami, FL": {
+      "rpp": 114.2,
+      "rpp_rents": null,
+      "median_rent": 1657.0,
+      "median_home_value": 475200.0,
+      "median_income": 59390.0
+    },
+    "Milwaukee, WI": {
+      "rpp": 96.9,
+      "rpp_rents": null,
+      "median_rent": 1033.0,
+      "median_home_value": 172000.0,
+      "median_income": 51888.0
+    },
+    "Minneapolis, MN": {
+      "rpp": 104.8,
+      "rpp_rents": null,
+      "median_rent": 1329.0,
+      "median_home_value": 345600.0,
+      "median_income": 80269.0
+    },
+    "Nashville, TN": {
+      "rpp": 96.3,
+      "rpp_rents": null,
+      "median_rent": 1486.0,
+      "median_home_value": 383100.0,
+      "median_income": 75197.0
+    },
+    "New Orleans, LA": {
+      "rpp": 92.6,
+      "rpp_rents": null,
+      "median_rent": 1211.0,
+      "median_home_value": 296400.0,
+      "median_income": 55339.0
+    },
+    "New York, NY": {
+      "rpp": 112.6,
+      "rpp_rents": null,
+      "median_rent": 1779.0,
+      "median_home_value": 751700.0,
+      "median_income": 79713.0
+    },
+    "Oakland, CA": {
+      "rpp": 115.6,
+      "rpp_rents": null,
+      "median_rent": null,
+      "median_home_value": null,
+      "median_income": null
+    },
+    "Oklahoma City, OK": {
+      "rpp": 90.4,
+      "rpp_rents": null,
+      "median_rent": 1083.0,
+      "median_home_value": 215100.0,
+      "median_income": 66702.0
+    },
+    "Omaha, NE": {
+      "rpp": 91.9,
+      "rpp_rents": null,
+      "median_rent": 1150.0,
+      "median_home_value": 230100.0,
+      "median_income": 72708.0
+    },
+    "Philadelphia, PA": {
+      "rpp": 102.6,
+      "rpp_rents": null,
+      "median_rent": 1323.0,
+      "median_home_value": 232400.0,
+      "median_income": 60698.0
+    },
+    "Phoenix, AZ": {
+      "rpp": 103.3,
+      "rpp_rents": null,
+      "median_rent": 1458.0,
+      "median_home_value": 381900.0,
+      "median_income": 77041.0
+    },
+    "Portland, OR": {
+      "rpp": 105.4,
+      "rpp_rents": null,
+      "median_rent": 1596.0,
+      "median_home_value": 557600.0,
+      "median_income": 88792.0
+    },
+    "Raleigh, NC": {
+      "rpp": 98.2,
+      "rpp_rents": null,
+      "median_rent": 1468.0,
+      "median_home_value": 377800.0,
+      "median_income": 82424.0
+    },
+    "Sacramento, CA": {
+      "rpp": 106.7,
+      "rpp_rents": null,
+      "median_rent": 1694.0,
+      "median_home_value": 484600.0,
+      "median_income": 83753.0
+    },
+    "San Antonio, TX": {
+      "rpp": 94.7,
+      "rpp_rents": null,
+      "median_rent": 1258.0,
+      "median_home_value": 219700.0,
+      "median_income": 62917.0
+    },
+    "San Diego, CA": {
+      "rpp": 111.9,
+      "rpp_rents": null,
+      "median_rent": 2223.0,
+      "median_home_value": 848500.0,
+      "median_income": 104321.0
+    },
+    "San Francisco, CA": {
+      "rpp": 115.6,
+      "rpp_rents": null,
+      "median_rent": 2419.0,
+      "median_home_value": 1380500.0,
+      "median_income": 141446.0
+    },
+    "San Jose, CA": {
+      "rpp": 110.4,
+      "rpp_rents": null,
+      "median_rent": 2617.0,
+      "median_home_value": 1187800.0,
+      "median_income": 141565.0
+    },
+    "Seattle, WA": {
+      "rpp": 111.1,
+      "rpp_rents": null,
+      "median_rent": 1998.0,
+      "median_home_value": 912100.0,
+      "median_income": 121984.0
+    },
+    "Tucson, AZ": {
+      "rpp": 96.9,
+      "rpp_rents": null,
+      "median_rent": 1079.0,
+      "median_home_value": 242200.0,
+      "median_income": 54546.0
+    },
+    "Tulsa, OK": {
+      "rpp": 89.2,
+      "rpp_rents": null,
+      "median_rent": 998.0,
+      "median_home_value": 189600.0,
+      "median_income": 58407.0
+    },
+    "Washington, DC": {
+      "rpp": 108.9,
+      "rpp_rents": null,
+      "median_rent": 1900.0,
+      "median_home_value": 724600.0,
+      "median_income": 106287.0
+    },
+    "Wichita, KS": {
+      "rpp": 88.9,
+      "rpp_rents": null,
+      "median_rent": 960.0,
+      "median_home_value": 179500.0,
+      "median_income": 63072.0
+    }
+  }
+}
