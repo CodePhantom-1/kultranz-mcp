@@ -43,10 +43,10 @@ Stateless server: plain `POST https://api.kultranz.com/mcp` with JSON-RPC 2.0 wo
 | Surface | Free tier | Paid |
 |---|---|---|
 | MCP (`/mcp`) | 200 tool calls/day per IP, no key | — |
-| REST API | 25 requests/day | [$5 lifetime key](https://kultranz.com/pages/api-docs/): no rate limit, no RapidAPI requirement |
-| RapidAPI | — | [Pro / Ultra / Mega tiers](https://rapidapi.com/cianot978/api/kultranz), gated by the RapidAPI proxy secret |
+| REST API | 25 requests/day | [$5 lifetime key](https://kultranz.com/pages/api-docs/?utm_source=github&utm_medium=organic&utm_campaign=revtest-oct): no rate limit, no RapidAPI requirement |
+| RapidAPI | — | [Pro / Ultra / Mega tiers](https://rapidapi.com/cianot978/api/kultranz?utm_source=github&utm_medium=organic&utm_campaign=revtest-oct), gated by the RapidAPI proxy secret |
 
-Docs and full pricing: https://kultranz.com/pages/api-docs/
+Docs and full pricing: https://kultranz.com/pages/api-docs/?utm_source=github&utm_medium=organic&utm_campaign=revtest-oct
 
 ## What is in this repo
 
@@ -66,7 +66,7 @@ npx wrangler deploy
 All credentials are environment secrets (`RAPIDAPI_PROXY_SECRET`, `MCP_API_KEY`, `POLAR_ACCESS_TOKEN`, `POLAR_PRODUCT_ID`) — none are required to run the open MCP endpoint.
 
 Data sources: BLS OEWS · BEA Regional Price Parities · U.S. Census ACS · IRS 2026.
-Methodology: https://kultranz.com/pages/methodology/ · Docs & pricing: https://kultranz.com/pages/api-docs/
-Open datasets (CC BY 4.0): [us-salary-cost-of-living-dataset](https://github.com/CodePhantom-1/us-salary-cost-of-living-dataset) · [2026-tax-brackets](https://github.com/CodePhantom-1/kultranz-2026-tax-brackets) · [cost-of-living-index](https://github.com/CodePhantom-1/kultranz-cost-of-living-index)
+Methodology: https://kultranz.com/pages/methodology/?utm_source=github&utm_medium=organic&utm_campaign=revtest-oct · Docs & pricing: https://kultranz.com/pages/api-docs/?utm_source=github&utm_medium=organic&utm_campaign=revtest-oct
+Open datasets (CC BY 4.0): [us-salary-cost-of-living-dataset](https://github.com/CodePhantom-1/us-salary-cost-of-living-dataset?utm_source=github&utm_medium=organic&utm_campaign=revtest-oct) · [2026-tax-brackets](https://github.com/CodePhantom-1/kultranz-2026-tax-brackets?utm_source=github&utm_medium=organic&utm_campaign=revtest-oct) · [cost-of-living-index](https://github.com/CodePhantom-1/kultranz-cost-of-living-index?utm_source=github&utm_medium=organic&utm_campaign=revtest-oct)
 
 MIT License. © kultranz.com
