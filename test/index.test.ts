@@ -398,10 +398,55 @@ describe("router validation", () => {
     expect(r.body.data.total_expenses).toBe(4150);
     expect(r.body.data.surplus).toBe(850);
   });
-  it("/budget rejects savingsPct > 100", async () => {
-    const r = await req("/budget?income=5000&savingsPct=150");
+  it("/budget rejects savingsPct > 50 (50/30/20 frame)", async () => {
+    const r = await req("/budget?income=5000&savingsPct=100");
     expect(r.status).toBe(400);
     expect(r.body.error.code).toBe("invalid_savings_pct");
+  });
+  it("/budget allows savingsPct=50 exactly, wants go to zero", async () => {
+    const r = await req("/budget?income=5000&savingsPct=50");
+    expect(r.status).toBe(200);
+    expect(r.body.data.needs).toBe(2500);
+    expect(r.body.data.savings).toBe(2500);
+    expect(r.body.data.wants).toBe(0);
+  });
+
+  describe("/salaries LIKE wildcards are literal", () => {
+    function dbStub(rows: Record<string, unknown>[]) {
+      const captured: { sql: string; args: unknown[] }[] = [];
+      const db = {
+        prepare(sql: string) {
+          return {
+            bind(...args: unknown[]) {
+              captured.push({ sql, args });
+              return { async all() { return { results: rows }; } };
+            },
+          };
+        },
+      };
+      return { db, captured };
+    }
+
+    it("escapes % in job so only literal matches return", async () => {
+      const rows = [{ job_title: "reg% analyst", city: "Austin", state: "TX" }];
+      const { db, captured } = dbStub(rows);
+      const res = await app.request("/salaries?job=reg%25", undefined, { DB: db } as never);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.data.count).toBe(1);
+      expect(body.data.records[0].job_title).toBe("reg% analyst");
+      expect(captured[0]!.sql).toContain("ESCAPE '\\'");
+      expect(captured[0]!.args[0]).toBe("%reg\\%%");
+    });
+
+    it("escapes _ in city as a literal underscore", async () => {
+      const rows = [{ job_title: "Nurse", city: "sea_town", state: "TX" }];
+      const { db, captured } = dbStub(rows);
+      const res = await app.request("/salaries?city=sea_town", undefined, { DB: db } as never);
+      expect(res.status).toBe(200);
+      expect(captured[0]!.sql).toContain("ESCAPE '\\'");
+      expect(captured[0]!.args[0]).toBe("%sea\\_town%");
+    });
   });
 
   it("/tax-brackets without state returns federal only", async () => {
@@ -432,15 +477,38 @@ describe("router validation", () => {
     expect(r.status).toBe(404);
   });
 
-  it("root lists all 10 endpoints", async () => {
+  it("root lists all 12 endpoints", async () => {
     const r = await req("/");
     expect(r.status).toBe(200);
-    expect(r.body.endpoints).toHaveLength(10);
+    expect(r.body.endpoints).toHaveLength(12);
     expect(r.body.endpoints).toContain("/mcp (MCP server, POST)");
+    expect(r.body.endpoints).toContain("/salaries/submit (POST, community)");
+    expect(r.body.endpoints).toContain("/salaries/recent (community)");
   });
 
   it("all responses have Access-Control-Allow-Origin header", async () => {
     const res = await app.request("/col-index?city=Albuquerque,%20NM");
     expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+  });
+});
+
+describe("gate path matching (exact /mcp exemption)", () => {
+  const env = { RAPIDAPI_PROXY_SECRET: "rs" } as never;
+
+  it("/mcp itself stays exempt from the RapidAPI gate", async () => {
+    const res = await app.request("/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+    }, env);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as any).result).toEqual({});
+  });
+
+  it("a path merely starting with /mcp does NOT inherit the exemption", async () => {
+    // startsWith("/mcp") used to let /mcp<anything> bypass the gate entirely.
+    const probe = await app.request("/mcpfoo", undefined, env);
+    expect(probe.status).toBe(401);
+    expect(((await probe.json()) as any).error.code).toBe("unauthorized");
   });
 });

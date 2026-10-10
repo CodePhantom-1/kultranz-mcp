@@ -2,6 +2,11 @@
 // paycheck-calculator.html (JS) which itself mirrors scripts/tax/engine.py.
 // Both reference data/tax_2026.json. All amounts annual USD.
 
+// 2026 employee elective-deferral limit (401k). Pretax above this, or above
+// gross pay itself, is not a real input: clamp it (parity with the site
+// calculator and scripts/tax/engine.py).
+const ELECTIVE_DEFERRAL_LIMIT = 23500;
+
 export type FilingStatus = "single" | "mfj";
 export type StateType = "none" | "flat" | "progressive";
 
@@ -79,6 +84,7 @@ export function computeTakeHome(
   pretax: number,
   taxData: TaxData,
 ): TakeHome {
+  pretax = Math.max(0, Math.min(pretax, gross, ELECTIVE_DEFERRAL_LIMIT));
   const fed = taxData.federal;
   const taxable = Math.max(0, gross - pretax - fed.standard_deduction[filingStatus]);
   const federalTax = round2(walkBrackets(taxable, fed.brackets[filingStatus]));

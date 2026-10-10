@@ -25,8 +25,16 @@
  * (what a RapidAPI front door injects), so one key works through either door.
  * It is deliberately a separate secret from RAPIDAPI_PROXY_SECRET: that one
  * gates the metered REST surface, while MCP is the free distribution channel.
+ *
+ * Open is not unmetered: tool calls are real work (get_salary_percentiles
+ * reads D1), so tools/call carries a per-hashed-IP daily meter (MCP_FREE_TIER,
+ * lazily created mcp_usage table — see meterToolCalls). Handshake methods
+ * (initialize, ping, tools/list) stay free so any client can connect and
+ * discover the tools. JSON-RPC batches are capped at MCP_BATCH_LIMIT entries.
  */
 import type { Context } from "hono";
+import { normalizeRateIp } from "./lib/rate-ip";
+import { anySecretMatches } from "./lib/secure-compare";
 import { computeTakeHome, type FilingStatus, type TaxData } from "./lib/tax";
 import { compareCities, type CityRppMap } from "./lib/col";
 import taxDataJson from "./data/tax_2026.json";
@@ -40,6 +48,15 @@ const LATEST = "2025-06-18";
 const SERVER_INFO = { name: "kultranz", title: "Kultranz US Salary & Cost of Living", version: "1.0.0" };
 
 const READ_ONLY = { readOnlyHint: true, idempotentHint: true, destructiveHint: false, openWorldHint: false };
+
+// Free tier for tool calls: per hashed IP per UTC day. Handshake methods are
+// never metered. Generous by design — a real session interleaves chat
+// between calls; this exists to price the D1-reading tool, not to nickel-and-
+// dime normal use.
+const MCP_FREE_TIER = 200;
+// JSON-RPC batch cap: a batch is a single HTTP request the server processes
+// serially, so an uncapped array buys an unbounded amount of work per call.
+const MCP_BATCH_LIMIT = 16;
 
 type ToolDef = {
   name: string; title: string; description: string;
@@ -197,17 +214,79 @@ function rpcError(id: unknown, code: number, message: string) {
   return { jsonrpc: "2.0", id, error: { code, message } };
 }
 
-// Opt-in API key (see header comment). Unset = open. Compared by value so a
-// leaked header *name* is not enough — the caller must hold the key itself.
-function authorized(c: Context): boolean {
+// Opt-in API key (see header comment). Unset = open. Compared by value —
+// timing-safe via the shared anySecretMatches helper — so a leaked header
+// *name* is not enough and a plain === cannot leak prefix timing.
+async function authorized(c: Context): Promise<boolean> {
   const key = c.env?.MCP_API_KEY;
   if (!key) return true;
-  const bearer = c.req.header("Authorization") || "";
-  return (
-    c.req.header("X-RapidAPI-Proxy-Secret") === key ||
-    c.req.header("X-RapidAPI-Subscription-Secret") === key ||
-    (bearer.startsWith("Bearer ") && bearer.slice(7).trim() === key)
-  );
+  const auth = c.req.header("Authorization") || "";
+  const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  return anySecretMatches([
+    c.req.header("X-RapidAPI-Proxy-Secret") || "",
+    c.req.header("X-RapidAPI-Subscription-Secret") || "",
+    bearer,
+  ], key);
+}
+
+// ---------------------------------------------------------------------------
+// Free-tier meter (fix: /mcp was open AND unmetered while its salary tool
+// hits D1). Same atomic increment-and-read pattern as billing.ts api_usage,
+// but a sibling mcp_usage table: sharing api_usage would need its PRIMARY KEY
+// widened to (ip_hash, day, endpoint), which no lazy CREATE can do on an
+// existing production table — a separate table needs no migration and can
+// never consume the REST free tier's counter. IPs only ever stored hashed.
+// ---------------------------------------------------------------------------
+async function sha256Hex(s: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+const ensuredTables = new WeakSet<object>();
+
+async function ensureTables(db: D1Database): Promise<void> {
+  if (ensuredTables.has(db)) return;
+  await db.prepare(
+    "CREATE TABLE IF NOT EXISTS mcp_usage (ip_hash TEXT, day TEXT, count INTEGER, PRIMARY KEY (ip_hash, day))",
+  ).run();
+  ensuredTables.add(db);
+}
+
+/** Count `calls` tool calls against the caller's IP; over MCP_FREE_TIER
+ * returns a 429 JSON-RPC error Response, else null to proceed. Fails open
+ * when metering is unavailable — an open server must not go down over its
+ * own quota bookkeeping. */
+function secondsUntilUtcMidnight(): string {
+  const now = new Date();
+  const next = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+  return String(Math.max(1, Math.round((next - now.getTime()) / 1000)));
+}
+
+async function meterToolCalls(c: Context, calls: number): Promise<Response | null> {
+  if (calls <= 0) return null;
+  const ip = c.req.header("CF-Connecting-IP");
+  const db = c.env?.DB as D1Database | undefined;
+  // No IP (off-Cloudflare caller, local vitest) or no D1 binding → unmetered.
+  if (!ip || !db) return null;
+  try {
+    await ensureTables(db);
+    const day = new Date().toISOString().slice(0, 10); // UTC day key
+    const ipHash = await sha256Hex(normalizeRateIp(ip));
+    const row = await db.prepare(
+      "INSERT INTO mcp_usage (ip_hash, day, count) VALUES (?, ?, ?) " +
+      "ON CONFLICT(ip_hash, day) DO UPDATE SET count = count + excluded.count RETURNING count",
+    ).bind(ipHash, day, calls).first<{ count: number }>();
+    if ((row?.count ?? 0) > MCP_FREE_TIER) {
+      c.header("Retry-After", secondsUntilUtcMidnight());
+      return c.json(
+        rpcError(null, -32002,
+          `Rate limit: ${MCP_FREE_TIER} MCP tool calls/day per IP. ` +
+          "Handshake methods (initialize, ping, tools/list) remain free."),
+        429,
+      );
+    }
+  } catch { /* metering unavailable → fail open, the server stays up */ }
+  return null;
 }
 
 // One JSON-RPC message -> one response object, or null when the message
@@ -281,7 +360,7 @@ export async function handleMcp(c: Context): Promise<Response> {
     );
   }
 
-  if (!authorized(c)) {
+  if (!(await authorized(c))) {
     return c.json(
       rpcError(null, -32001,
         "Unauthorized: missing or invalid API key. Send it as 'Authorization: Bearer <key>' " +
@@ -313,9 +392,19 @@ export async function handleMcp(c: Context): Promise<Response> {
 
   // JSON-RPC batch. Batching was removed from the spec in 2025-06-18, but
   // clients pinned to 2025-03-26 still send arrays, so answer each message
-  // that expects a reply; 202 with an empty body if none does.
+  // that expects a reply; 202 with an empty body if none does. The batch is
+  // capped (MCP_BATCH_LIMIT): one HTTP request processed serially must not
+  // buy unbounded work.
   if (Array.isArray(msg)) {
     if (!msg.length) return c.json(rpcError(null, -32600, "Invalid Request: empty batch"), 400);
+    if (msg.length > MCP_BATCH_LIMIT) {
+      return c.json(rpcError(null, -32600,
+        `Invalid Request: batch exceeds ${MCP_BATCH_LIMIT} entries`), 400);
+    }
+    // Meter tool calls only (initialize/ping/tools/list stay free).
+    const toolCalls = msg.filter((e: any) => e?.method === "tools/call").length;
+    const denied = await meterToolCalls(c, toolCalls);
+    if (denied) return denied;
     const out: unknown[] = [];
     for (const entry of msg) {
       const r = await respondTo(entry, env);
@@ -333,5 +422,11 @@ export async function handleMcp(c: Context): Promise<Response> {
     return c.json(rpcError(msg?.id ?? null, -32600, "Invalid Request"), 400);
   }
 
+  // Meter tool calls only — placed after the 202/400 short-circuits so
+  // notifications and malformed messages are never charged.
+  if (msg.method === "tools/call") {
+    const denied = await meterToolCalls(c, 1);
+    if (denied) return denied;
+  }
   return c.json(await dispatch(msg.id, msg.method, msg.params, env));
 }

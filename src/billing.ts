@@ -26,14 +26,24 @@
  *
  *   licenses(key_hash TEXT PRIMARY KEY, status TEXT, validated_at INTEGER)
  *   api_usage(ip_hash TEXT, day TEXT, count INTEGER, PRIMARY KEY(ip_hash, day))
+ *   validation_fails(ip_hash TEXT, day TEXT, count INTEGER, PRIMARY KEY(ip_hash, day))
+ *
+ * validation_fails counts definitive Polar validation misses per hashed IP
+ * per day — the anti-probe meter that stops key-guessers burning Polar
+ * quota and inserting a negative-cache row per guess (VALIDATION_FAIL_LIMIT).
+ * The /mcp tool-call meter lives in mcp.ts with a sibling mcp_usage table.
  */
 import type { Context } from "hono";
+import { normalizeRateIp } from "./lib/rate-ip";
+import { anySecretMatches } from "./lib/secure-compare";
 
 export interface BillingEnv {
   DB?: D1Database;
   RAPIDAPI_PROXY_SECRET?: string;
   POLAR_ACCESS_TOKEN?: string;
   POLAR_PRODUCT_ID?: string;
+  /** Polar organization id (public identifier) - required by the validate API since 2026-10. */
+  POLAR_ORG_ID?: string;
 }
 
 /** BillingEnv with the Polar secrets narrowed to required strings. */
@@ -43,6 +53,10 @@ const POLAR_API = "https://api.polar.sh/v1";
 const SUCCESS_URL = "https://kultranz.com/pages/api-docs/?welcome=lifetime";
 const BUY_URL = "https://api.kultranz.com/billing/buy";
 const FREE_TIER_LIMIT = 25;
+/** Definitive Polar validation misses allowed per hashed IP per UTC day
+ * before further validation attempts are answered locally (401, no Polar
+ * call, no cache row). Far above any honest typo-retry rate. */
+const VALIDATION_FAIL_LIMIT = 20;
 const LICENSE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** True only when the deployment can talk to Polar (both secrets set). */
@@ -73,6 +87,9 @@ async function ensureTables(db: D1Database): Promise<void> {
   ).run();
   await db.prepare(
     "CREATE TABLE IF NOT EXISTS api_usage (ip_hash TEXT, day TEXT, count INTEGER, PRIMARY KEY (ip_hash, day))",
+  ).run();
+  await db.prepare(
+    "CREATE TABLE IF NOT EXISTS validation_fails (ip_hash TEXT, day TEXT, count INTEGER, PRIMARY KEY (ip_hash, day))",
   ).run();
   ensuredTables.add(db);
 }
@@ -112,17 +129,22 @@ export async function handleBuy(c: Context, env: BillingEnv | undefined): Promis
 // ---------------------------------------------------------------------------
 // Polar's validate answers 200 with the license-key object (status "granted")
 // for a usable key and 404 for anything else. Be defensive about the shape:
-// honour an explicit `valid` boolean if present, else `status === "granted"`,
-// else trust the 200 itself. Returns null when the body gives no verdict.
+// honour an explicit `valid` boolean if present, else `status === "granted"`.
+// An ambiguous 200 (no recognizable verdict) returns null → the caller fails
+// CLOSED for that one request and caches nothing: a key is never upgraded to
+// "valid" just because Polar answered 200 with a shape we don't understand.
 function interpretValidation(body: unknown): "valid" | "invalid" | null {
   if (!body || typeof body !== "object") return null;
   const b = body as Record<string, unknown>;
   if (typeof b.valid === "boolean") return b.valid ? "valid" : "invalid";
   if (typeof b.status === "string") return b.status === "granted" ? "valid" : "invalid";
-  return "valid";
+  // Ambiguous 200: no recognizable verdict field. Fail closed, but leave a
+  // breadcrumb - a silent Polar schema change here would 401 every payer.
+  console.warn("[billing] polar validate: 200 without recognizable verdict (failing closed)");
+  return null;
 }
 
-async function checkLicense(env: PolarEnv, key: string): Promise<"valid" | "invalid"> {
+async function checkLicense(env: PolarEnv, key: string, ip?: string): Promise<"valid" | "invalid"> {
   const hash = await sha256Hex(key);
 
   // 24h cached verdict first (key is stored hashed, never raw).
@@ -139,12 +161,32 @@ async function checkLicense(env: PolarEnv, key: string): Promise<"valid" | "inva
     } catch { /* cache read failed → fall through and ask Polar */ }
   }
 
+  // Anti-probe meter: a key-guesser burns one Polar validate call and one
+  // negative-cache row per guess. Once the IP has produced
+  // VALIDATION_FAIL_LIMIT definitive misses today, stop asking Polar entirely
+  // — further validation attempts answer 401 from the Worker (a fresh verdict
+  // already cached for a key is still honoured above, so a paying user behind
+  // a shared IP keeps working as long as their key was validated before the
+  // block). This also caps negative-cache growth at the same rate: no Polar
+  // call → no licenses row insert.
+  const ipHash = ip ? await sha256Hex(normalizeRateIp(ip)) : null;
+  if (env.DB && ipHash) {
+    try {
+      const day = new Date().toISOString().slice(0, 10); // UTC day key
+      const fails = await env.DB
+        .prepare("SELECT count FROM validation_fails WHERE ip_hash = ? AND day = ?")
+        .bind(ipHash, day)
+        .first<{ count: number }>();
+      if ((fails?.count ?? 0) >= VALIDATION_FAIL_LIMIT) return "invalid";
+    } catch { /* meter unreadable → proceed to Polar (fail open) */ }
+  }
+
   let verdict: "valid" | "invalid" | null = null;
   try {
     const res = await fetch(`${POLAR_API}/license-keys/validate`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.POLAR_ACCESS_TOKEN}` },
-      body: JSON.stringify({ key }),
+      body: JSON.stringify(env.POLAR_ORG_ID ? { key, organization_id: env.POLAR_ORG_ID } : { key }),
     });
     if (res.status === 404) {
       verdict = "invalid";
@@ -156,6 +198,19 @@ async function checkLicense(env: PolarEnv, key: string): Promise<"valid" | "inva
     // on Polar's side must not lock a paying key out for 24h.
   } catch { /* network fault → non-verdict */ }
   if (!verdict) return "invalid";
+
+  // A definitive miss counts against the requesting IP (honest typos count
+  // too — the limit is far above real retry rates and resets daily).
+  // Ambiguous non-verdicts above deliberately do not.
+  if (verdict === "invalid" && env.DB && ipHash) {
+    try {
+      const day = new Date().toISOString().slice(0, 10); // UTC day key
+      await env.DB.prepare(
+        "INSERT INTO validation_fails (ip_hash, day, count) VALUES (?, ?, 1) " +
+        "ON CONFLICT(ip_hash, day) DO UPDATE SET count = count + 1",
+      ).bind(ipHash, day).run();
+    } catch { /* counter unavailable → the verdict still stands */ }
+  }
 
   if (env.DB) {
     try {
@@ -175,16 +230,16 @@ async function checkLicense(env: PolarEnv, key: string): Promise<"valid" | "inva
 // request through. RapidAPI first (cheapest, no I/O), then license, then the
 // free tier.
 export async function authorizeRest(c: Context, env: PolarEnv): Promise<Response | null> {
-  // 1. RapidAPI tier.
+  // 1. RapidAPI tier (timing-safe compares via the shared helper).
   const secret = env.RAPIDAPI_PROXY_SECRET;
   const bearer = bearerOf(c);
   const apiKey = (c.req.header("X-Api-Key") || "").trim();
-  if (secret && (
-    c.req.header("X-RapidAPI-Proxy-Secret") === secret ||
-    c.req.header("X-RapidAPI-Subscription-Secret") === secret ||
-    bearer === secret ||
-    apiKey === secret
-  )) {
+  if (secret && await anySecretMatches([
+    c.req.header("X-RapidAPI-Proxy-Secret") || "",
+    c.req.header("X-RapidAPI-Subscription-Secret") || "",
+    bearer,
+    apiKey,
+  ], secret)) {
     return null;
   }
 
@@ -192,7 +247,7 @@ export async function authorizeRest(c: Context, env: PolarEnv): Promise<Response
   //    a Polar license key — validate it, fail closed on anything uncertain.
   const key = bearer || apiKey;
   if (key) {
-    const status = await checkLicense(env, key);
+    const status = await checkLicense(env, key, c.req.header("CF-Connecting-IP"));
     if (status === "valid") return null;
     return c.json({
       error: {
@@ -232,7 +287,7 @@ async function freeTier(c: Context, env: PolarEnv): Promise<Response | null> {
   try {
     await ensureTables(env.DB);
     const day = new Date().toISOString().slice(0, 10); // UTC day key
-    const ipHash = await sha256Hex(ip);
+    const ipHash = await sha256Hex(normalizeRateIp(ip));
     // Atomic increment-and-read: concurrent requests cannot undercount.
     const row = await env.DB.prepare(
       "INSERT INTO api_usage (ip_hash, day, count) VALUES (?, ?, 1) " +
@@ -240,6 +295,7 @@ async function freeTier(c: Context, env: PolarEnv): Promise<Response | null> {
     ).bind(ipHash, day).first<{ count: number }>();
     const count = row?.count ?? 1;
     if (count > FREE_TIER_LIMIT) {
+      c.header("Retry-After", secondsUntilUtcMidnight());
       return c.json({
         error: {
           code: "rate_limited",
@@ -249,4 +305,10 @@ async function freeTier(c: Context, env: PolarEnv): Promise<Response | null> {
     }
   } catch { /* metering unavailable → fail open, the API stays up */ }
   return null;
+}
+
+function secondsUntilUtcMidnight(): string {
+  const now = new Date();
+  const next = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+  return String(Math.max(1, Math.round((next - now.getTime()) / 1000)));
 }

@@ -57,6 +57,7 @@ type Stmt = { sql: string; args: unknown[] };
 function memoryD1(failUsageWrite = false) {
   const licenses = new Map<string, { status: string; validated_at: number }>();
   const usage = new Map<string, number>(); // `${ip_hash}|${day}` -> count
+  const fails = new Map<string, number>(); // validation_fails: `${ip_hash}|${day}` -> count
   const stmts: Stmt[] = [];
   const creates: string[] = [];
 
@@ -77,6 +78,15 @@ function memoryD1(failUsageWrite = false) {
       usage.set(k, n);
       return { count: n };
     }
+    if (sql.startsWith("SELECT count FROM validation_fails")) {
+      const n = fails.get(`${args[0]}|${args[1]}`);
+      return n === undefined ? null : { count: n };
+    }
+    if (sql.startsWith("INSERT INTO validation_fails")) {
+      const k = `${args[0]}|${args[1]}`;
+      fails.set(k, (fails.get(k) ?? 0) + 1);
+      return { success: true };
+    }
     return kind === "first" ? null : { success: true };
   };
 
@@ -91,7 +101,7 @@ function memoryD1(failUsageWrite = false) {
     },
   } as unknown as D1Database;
 
-  return { db, licenses, usage, stmts, creates };
+  return { db, licenses, usage, fails, stmts, creates };
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +216,22 @@ describe("license auth", () => {
     expect(Math.abs(cached!.validated_at - Date.now())).toBeLessThan(60_000);
     expect([...mem.licenses.keys()][0]).toMatch(/^[0-9a-f]{64}$/);
     expect([...mem.usage.keys()]).toHaveLength(0); // licensed ≠ metered
+  });
+  it("sends organization_id in the validate body when POLAR_ORG_ID is set (Polar 2026-10 API)", async () => {
+    const mem = memoryD1();
+    const fetchMock = polarFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    const r = await hit("/paycheck?salary=100000&state=CA", {
+      env: { ...POLAR_ENV, DB: mem.db, POLAR_ORG_ID: "org-uuid-test" },
+      headers: { Authorization: `Bearer ${LICENSE_KEY}`, ...IP },
+    });
+    expect(r.status).toBe(200);
+    const call = fetchMock.mock.calls[0]!;
+    expect(String(call[0])).toBe("https://api.polar.sh/v1/license-keys/validate");
+    expect(JSON.parse(call[1]!.body as string)).toEqual({
+      key: LICENSE_KEY,
+      organization_id: "org-uuid-test",
+    });
   });
 
   it("valid key via X-Api-Key header → unlimited access", async () => {
@@ -325,6 +351,114 @@ describe("license auth", () => {
 });
 
 // ---------------------------------------------------------------------------
+// anti-probe meter: definitive Polar validation misses per hashed IP (20/day)
+// ---------------------------------------------------------------------------
+describe("anti-probe meter", () => {
+  it("ambiguous Polar 200 (no valid/status field) fails closed and caches nothing", async () => {
+    const mem = memoryD1();
+    vi.stubGlobal("fetch", polarFetch({ licenseBody: { id: "lk_1", key: "pol_x" } }));
+    const r = await hit("/paycheck?salary=100000&state=TX", {
+      env: { ...POLAR_ENV, DB: mem.db },
+      headers: { Authorization: "Bearer pol_ambiguous" },
+    });
+    expect(r.status).toBe(401);
+    expect(r.body.error.code).toBe("invalid_license");
+    expect(mem.licenses.size).toBe(0); // nothing cached
+    expect(mem.fails.size).toBe(0);    // ambiguous ≠ definitive miss — not counted
+  });
+
+  it("20 definitive misses: 401 each + negative-cache row each; 21st → 401 with NO Polar call and NO new row", async () => {
+    const mem = memoryD1();
+    const probing = polarFetch({ licenseStatus: 404, licenseBody: { error: "not_found" } });
+    vi.stubGlobal("fetch", probing);
+    const env = { ...POLAR_ENV, DB: mem.db };
+    for (let i = 0; i < 20; i++) {
+      const r = await hit("/paycheck?salary=100000&state=TX", {
+        env,
+        headers: { Authorization: `Bearer pol_guess_${i}`, ...IP },
+      });
+      expect(r.status).toBe(401);
+      expect(r.body.error.code).toBe("invalid_license");
+    }
+    expect(probing).toHaveBeenCalledTimes(20);       // one Polar call per guess…
+    expect(mem.licenses.size).toBe(20);             // …and one negative-cache row each — now capped
+    expect([...mem.fails.values()][0]).toBe(20);
+
+    // 21st attempt from the same IP: 401 served locally, Polar untouched.
+    const after = polarFetch({ licenseStatus: 200, licenseBody: { status: "granted" } });
+    vi.stubGlobal("fetch", after);
+    const r21 = await hit("/paycheck?salary=100000&state=TX", {
+      env,
+      headers: { Authorization: "Bearer pol_guess_20", ...IP },
+    });
+    expect(r21.status).toBe(401);
+    expect(r21.body.error.code).toBe("invalid_license");
+    expect(after).not.toHaveBeenCalled();
+    expect(mem.licenses.size).toBe(20); // no new negative-cache row either
+  });
+
+  it("the block is scoped to validation attempts, not the whole request path", async () => {
+    const mem = memoryD1();
+    vi.stubGlobal("fetch", polarFetch({ licenseStatus: 404 }));
+    const env = { ...POLAR_ENV, DB: mem.db };
+    for (let i = 0; i < 20; i++) {
+      await hit("/paycheck?salary=100000&state=TX", {
+        env,
+        headers: { Authorization: `Bearer pol_guess_${i}`, ...IP },
+      });
+    }
+    // Anonymous free-tier traffic from the SAME IP still works and meters
+    // normally — the prober's block is not everyone's on that IP.
+    const anon = await hit("/col-index", { env, headers: { ...IP } });
+    expect(anon.status).toBe(200);
+    const dayKey = new Date().toISOString().slice(0, 10);
+    expect(mem.usage.get(`${sha("203.0.113.7")}|${dayKey}`)).toBe(1);
+  });
+
+  it("a verdict cached before the block is still honoured", async () => {
+    const mem = memoryD1();
+    vi.stubGlobal("fetch", polarFetch({ licenseStatus: 404 }));
+    const env = { ...POLAR_ENV, DB: mem.db };
+    for (let i = 0; i < 20; i++) {
+      await hit("/paycheck?salary=100000&state=TX", {
+        env,
+        headers: { Authorization: `Bearer pol_guess_${i}`, ...IP },
+      });
+    }
+    // A key validated VALID before the block keeps working from that IP.
+    mem.licenses.set(sha("pol_paying"), { status: "valid", validated_at: Date.now() });
+    const fetchMock = noPolarFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    const r = await hit("/paycheck?salary=100000&state=TX", {
+      env,
+      headers: { Authorization: "Bearer pol_paying", ...IP },
+    });
+    expect(r.status).toBe(200);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("another IP is unaffected by the block", async () => {
+    const mem = memoryD1();
+    vi.stubGlobal("fetch", polarFetch({ licenseStatus: 404 }));
+    const env = { ...POLAR_ENV, DB: mem.db };
+    for (let i = 0; i < 20; i++) {
+      await hit("/paycheck?salary=100000&state=TX", {
+        env,
+        headers: { Authorization: `Bearer pol_guess_${i}`, ...IP },
+      });
+    }
+    const fetchMock = polarFetch({ licenseStatus: 404 });
+    vi.stubGlobal("fetch", fetchMock);
+    const other = await hit("/paycheck?salary=100000&state=TX", {
+      env,
+      headers: { Authorization: "Bearer pol_other_ip", ...OTHER_IP },
+    });
+    expect(other.status).toBe(401); // Polar still consulted for the other IP
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // free tier
 // ---------------------------------------------------------------------------
 describe("free tier", () => {
@@ -340,8 +474,9 @@ describe("free tier", () => {
     expect(key).toBe(`${sha("203.0.113.7")}|${new Date().toISOString().slice(0, 10)}`);
     expect(key).not.toContain("203.0.113.7"); // stored hashed, never raw
     expect(count).toBe(1);
-    // The two billing tables are created lazily on first metered use.
-    expect(mem.creates).toHaveLength(2);
+    // The three billing tables (licenses, api_usage, validation_fails)
+    // are created lazily on first metered use.
+    expect(mem.creates).toHaveLength(3);
   });
 
   it("requests 1-25 pass, 26 gets the 429 upsell body", async () => {
@@ -354,6 +489,8 @@ describe("free tier", () => {
     const over = await hit("/col-index", { env, headers: { ...IP } });
     expect(over.status).toBe(429);
     expect(over.body).toEqual(RATE_LIMITED_BODY);
+    // Denials still carry open CORS — a browser can read the envelope.
+    expect(over.headers.get("Access-Control-Allow-Origin")).toBe("*");
     // Counter keeps counting past the cap (increment on every request).
     expect([...mem.usage.values()][0]).toBe(26);
   });
@@ -378,6 +515,7 @@ describe("free tier", () => {
     });
     expect(r.status).toBe(405);
     expect(r.body.error.code).toBe("method_not_allowed");
+    expect(r.headers.get("Access-Control-Allow-Origin")).toBe("*");
     expect(r.body.error.message).toContain("https://api.kultranz.com/billing/buy");
     expect(mem.usage.size).toBe(0);
   });
@@ -511,5 +649,16 @@ describe("gate precedence", () => {
   it("CORS allows the X-Api-Key header (browser license holders)", async () => {
     const res = await app.request("/col-index", undefined, { ...POLAR_ENV } as never);
     expect(res.headers.get("Access-Control-Allow-Headers")).toContain("X-Api-Key");
+  });
+
+  it("the legacy RapidAPI 401 (billing off) carries open CORS", async () => {
+    const r = await hit("/paycheck?salary=100000&state=CA", {
+      env: { RAPIDAPI_PROXY_SECRET: "rs" },
+      headers: { ...IP },
+    });
+    expect(r.status).toBe(401);
+    expect(r.body.error.code).toBe("unauthorized");
+    expect(r.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(r.headers.get("Access-Control-Allow-Methods")).toContain("GET");
   });
 });

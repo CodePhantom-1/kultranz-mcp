@@ -5,8 +5,11 @@
 // opt-in MCP_API_KEY gate, and parity between tool results and the REST
 // endpoints (same engine, same data, so the numbers must match exactly).
 import { describe, it, expect } from "vitest";
+import { createHash } from "node:crypto";
 import app from "../src/index";
 import { TOOLS } from "../src/mcp";
+
+const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -206,6 +209,20 @@ describe("MCP transport", () => {
     const r = await mcp([]);
     expect(r.status).toBe(400);
     expect(r.body.error.code).toBe(-32600);
+  });
+
+  it("batch of 17 entries is rejected with -32600 (cap 16, no processing)", async () => {
+    const r = await mcp(Array.from({ length: 17 }, () => rpc("ping")));
+    expect(r.status).toBe(400);
+    expect(r.body.error.code).toBe(-32600);
+    expect(r.body.error.message).toContain("16");
+  });
+
+  it("batch of exactly 16 entries is processed", async () => {
+    const r = await mcp(Array.from({ length: 16 }, () => rpc("ping")));
+    expect(r.status).toBe(200);
+    expect(r.body).toHaveLength(16);
+    expect(r.body.every((x: any) => x.result).valueOf()).toBe(true);
   });
 
   it("batch entry that is garbage yields an embedded -32600 error object", async () => {
@@ -480,5 +497,135 @@ describe("MCP auth", () => {
 
     const mcpOpen = await mcp(rpc("ping"), { env: restEnv });
     expect(mcpOpen.status).toBe(200);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// free-tier meter: 200 tool calls/day per hashed IP (tools/call only)
+// ---------------------------------------------------------------------------
+/** D1 stub with real mcp_usage counter semantics: `${ip_hash}|${day}` keyed. */
+function meterD1(opts: { seed?: Record<string, number>; failMeter?: boolean } = {}) {
+  const counts = new Map<string, number>(Object.entries(opts.seed ?? {}));
+  const stmts: { sql: string; args: unknown[] }[] = [];
+  const creates: string[] = [];
+  const db = {
+    prepare(sql: string) {
+      const terminal = (args: unknown[]) => ({
+        run: async () => {
+          stmts.push({ sql, args });
+          if (sql.startsWith("CREATE TABLE")) creates.push(sql);
+          return { success: true };
+        },
+        first: async () => {
+          stmts.push({ sql, args });
+          if (sql.startsWith("INSERT INTO mcp_usage")) {
+            if (opts.failMeter) throw new Error("D1 down");
+            const k = `${args[0]}|${args[1]}`;
+            const n = (counts.get(k) ?? 0) + Number(args[2]);
+            counts.set(k, n);
+            return { count: n };
+          }
+          return null;
+        },
+        all: async () => {
+          stmts.push({ sql, args });
+          return { results: [] };
+        },
+      });
+      return { bind: (...args: unknown[]) => terminal(args), ...terminal([]) };
+    },
+  } as unknown as D1Database;
+  return { db, stmts, creates, counts };
+}
+
+describe("MCP free-tier meter (200 tool calls/day per hashed IP)", () => {
+  const IPH = { "CF-Connecting-IP": "203.0.113.7" };
+  const day = () => new Date().toISOString().slice(0, 10);
+  const key = (ip: string) => `${sha(ip)}|${day()}`;
+
+  it("handshake methods (initialize/ping/tools/list) are never metered", async () => {
+    const mem = meterD1();
+    await mcp(rpc("initialize", { protocolVersion: "2025-06-18" }), { env: { DB: mem.db }, headers: IPH });
+    await mcp(rpc("ping"), { env: { DB: mem.db }, headers: IPH });
+    await mcp(rpc("tools/list"), { env: { DB: mem.db }, headers: IPH });
+    expect(mem.stmts).toHaveLength(0); // not even a CREATE — the table is only touched by tool calls
+  });
+
+  it("tools/call is metered once per call, keyed by hashed IP", async () => {
+    const mem = meterD1();
+    const r = await mcp(callTool("get_tax_brackets", {}), { env: { DB: mem.db }, headers: IPH });
+    expect(r.status).toBe(200);
+    expect(r.body.result.isError).toBe(false);
+    const inserts = mem.stmts.filter((s) => s.sql.startsWith("INSERT INTO mcp_usage"));
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0].args[0]).toBe(sha("203.0.113.7")); // hashed, never raw
+    expect(mem.counts.get(key("203.0.113.7"))).toBe(1);
+  });
+
+  it("call 200 passes, call 201 → 429 JSON-RPC error WITH open CORS headers", async () => {
+    const mem = meterD1({ seed: { [key("203.0.113.7")]: 199 } });
+    const r200 = await mcp(callTool("get_tax_brackets", {}), { env: { DB: mem.db }, headers: IPH });
+    expect(r200.status).toBe(200);
+    expect(mem.counts.get(key("203.0.113.7"))).toBe(200);
+    const r429 = await mcp(callTool("get_tax_brackets", {}), { env: { DB: mem.db }, headers: IPH });
+    expect(r429.status).toBe(429);
+    expect(r429.body.error.code).toBe(-32002);
+    expect(r429.body.error.message).toContain("200");
+    // The denial must stay readable from a browser — CORS headers present.
+    expect(r429.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(r429.headers.get("Access-Control-Allow-Methods")).toContain("POST");
+    expect(r429.headers.get("Access-Control-Allow-Headers")).toContain("Authorization");
+  });
+
+  it("each tools/call entry in a batch is metered (one atomic increment)", async () => {
+    const mem = meterD1();
+    const r = await mcp([
+      callTool("get_tax_brackets", {}),
+      callTool("get_tax_brackets", {}),
+      rpc("ping"), // free
+    ], { env: { DB: mem.db }, headers: IPH });
+    expect(r.status).toBe(200);
+    expect(r.body).toHaveLength(3);
+    const inserts = mem.stmts.filter((s) => s.sql.startsWith("INSERT INTO mcp_usage"));
+    expect(inserts).toHaveLength(1);
+    expect(Number(inserts[0].args[2])).toBe(2); // two tool calls in one increment
+    expect(mem.counts.get(key("203.0.113.7"))).toBe(2);
+  });
+
+  it("an oversized batch is rejected before any metering", async () => {
+    const mem = meterD1();
+    const r = await mcp(
+      Array.from({ length: 17 }, () => rpc("tools/call", { name: "list_metros", arguments: {} })),
+      { env: { DB: mem.db }, headers: IPH },
+    );
+    expect(r.status).toBe(400);
+    expect(r.body.error.code).toBe(-32600);
+    expect(mem.stmts).toHaveLength(0);
+  });
+
+  it("no CF-Connecting-IP (off-Cloudflare caller) → unmetered", async () => {
+    const mem = meterD1();
+    const r = await mcp(callTool("get_tax_brackets", {}), { env: { DB: mem.db } });
+    expect(r.status).toBe(200);
+    expect(mem.stmts).toHaveLength(0);
+  });
+
+  it("metering infrastructure failure → fail open (the server stays up)", async () => {
+    const mem = meterD1({ failMeter: true });
+    const r = await mcp(callTool("get_tax_brackets", {}), { env: { DB: mem.db }, headers: IPH });
+    expect(r.status).toBe(200);
+    expect(r.body.result.isError).toBe(false);
+  });
+
+  it("each IP has its own bucket", async () => {
+    const mem = meterD1({ seed: { [key("203.0.113.7")]: 200 } }); // IP A already over
+    const rA = await mcp(callTool("get_tax_brackets", {}), { env: { DB: mem.db }, headers: IPH });
+    expect(rA.status).toBe(429);
+    const rB = await mcp(callTool("get_tax_brackets", {}), {
+      env: { DB: mem.db },
+      headers: { "CF-Connecting-IP": "198.51.100.99" },
+    });
+    expect(rB.status).toBe(200);
+    expect(mem.counts.get(key("198.51.100.99"))).toBe(1);
   });
 });

@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { secretMatches } from "./lib/secure-compare";
 import { computeTakeHome, type FilingStatus, type TaxData } from "./lib/tax";
 function round2(n: number): number { return Math.round(n * 100) / 100; }
 import { compareCities, type CityRppMap } from "./lib/col";
@@ -7,6 +8,7 @@ import taxDataJson from "./data/tax_2026.json";
 import cityRppJson from "./data/city_rpp.json";
 import { handleMcp } from "./mcp";
 import { authorizeRest, billingConfigured, handleBuy } from "./billing";
+import { handleSubmit, handleRecent, handleAdmin } from "./submissions";
 
 const TAX_DATA = taxDataJson as unknown as TaxData;
 const CITIES = cityRppJson.cities as unknown as CityRppMap;
@@ -22,22 +24,44 @@ interface Env {
   MCP_API_KEY?: string;
   POLAR_ACCESS_TOKEN?: string;
   POLAR_PRODUCT_ID?: string;
+  ADMIN_KEY?: string;
 }
 
 const app = new Hono<{ Bindings: Env }>();
 
 // CORS open: RapidAPI proxies, and the kultranz.com demo page hits this directly.
 app.use("*", async (c, next) => {
+  // CORS headers go on BEFORE the auth gates below: a 401/405/429 denial is
+  // still an API response a browser must be able to read — without ACAO the
+  // page sees an opaque network error instead of the JSON envelope. (Asserted
+  // again after next() at the bottom for responses built downstream.)
+  c.header("Access-Control-Allow-Origin", "*");
+  // POST/DELETE + the MCP headers: browser-based MCP clients (Streamable HTTP)
+  // preflight against /mcp with these; harmless for the REST routes. X-Api-Key
+  // is the browser-friendly carrier for Polar license keys.
+  c.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE");
+  c.header("Access-Control-Allow-Headers",
+    "Content-Type, Authorization, MCP-Protocol-Version, Mcp-Session-Id, Last-Event-ID, " +
+    "X-RapidAPI-Proxy-Secret, X-RapidAPI-Subscription-Secret, X-Api-Key");
   // If RapidAPI proxy secret is configured, reject direct hits that bypass RapidAPI.
   // Only active when the env var is set — local dev and the free demo stay open.
   // /mcp is exempt from this RapidAPI gate: MCP is the free distribution
   // channel for what the site's public calculators already expose, and RapidAPI's
   // header injection does not reach native MCP clients. It carries its own
-  // opt-in key instead — MCP_API_KEY, checked in mcp.ts. /billing/buy is exempt
-  // too: it is the checkout entry point quoted in 429 responses and must stay
-  // reachable with no credentials at all.
+  // opt-in key instead — MCP_API_KEY, checked in mcp.ts — plus a per-hashed-IP
+  // tool-call meter there, so "open" does not mean "unmetered". /billing/buy is
+  // exempt too: it is the checkout entry point quoted in 429 responses and must
+  // stay reachable with no credentials at all. The community endpoints
+  // /salaries/submit and /salaries/recent are exempt as well: they are the
+  // kultranz.com salary pages' own flywheel (submissions.ts) — anonymous
+  // browser traffic by design, carrying their own rate limit, spam defenses
+  // and moderation queue instead of the API-key tiers.
   const path = c.req.path;
-  if (!path.startsWith("/mcp") && path !== "/billing/buy") {
+  // Exact match: startsWith("/mcp") would also exempt /mcp<anything> from
+  // every gate below, even though only /mcp itself is an MCP route.
+  if (path !== "/mcp" && path !== "/billing/buy" &&
+      path !== "/salaries/submit" && path !== "/salaries/recent" &&
+      path !== "/admin/submissions") { // self-authenticated (ADMIN_KEY)
     if (billingConfigured(c.env)) {
       // Billing tier live (POLAR_* secrets set): RapidAPI secret or a valid
       // Polar license key → unlimited; anything else → free tier (25 GET
@@ -47,14 +71,15 @@ app.use("*", async (c, next) => {
     } else if (c.env?.RAPIDAPI_PROXY_SECRET) {
       // Legacy gate — also the complete behavior while the Polar secrets are
       // unset, so a no-billing deploy degrades to exactly the pre-launch API.
-      // Value comparison, not mere header presence (2026-10-03 review): the old
-      // presence-only check let anyone who knew the header NAME through with any
-      // value. RapidAPI injects the real secret, so legitimate traffic still
-      // passes; the mcp.ts gate has always compared values.
       const key = c.env.RAPIDAPI_PROXY_SECRET;
+      // Value comparison, not mere header presence (2026-10-03 review), and
+      // timing-safe via the shared secretMatches helper: a plain === on a
+      // secret leaks length/prefix timing, and the old presence-only check
+      // let anyone who knew the header NAME through with any value. RapidAPI
+      // injects the real secret, so legitimate traffic still passes.
       const ok =
-        c.req.header("X-RapidAPI-Proxy-Secret") === key ||
-        c.req.header("X-RapidAPI-Subscription-Secret") === key;
+        (await secretMatches(c.req.header("X-RapidAPI-Proxy-Secret") || "", key)) ||
+        (await secretMatches(c.req.header("X-RapidAPI-Subscription-Secret") || "", key));
       if (!ok) {
         return c.json({ error: { code: "unauthorized", message: "Requests must go through RapidAPI." } }, 401);
       }
@@ -83,6 +108,7 @@ app.get("/", (c) =>
     endpoints: [
       "/paycheck", "/cost-of-living", "/tax-brackets", "/col-index",
       "/compound-interest", "/net-worth", "/debt-payoff", "/budget", "/salaries",
+      "/salaries/submit (POST, community)", "/salaries/recent (community)",
       "/mcp (MCP server, POST)",
     ],
     docs: "https://kultranz.com/api-docs/",
@@ -259,8 +285,9 @@ app.get("/budget", (c) => {
 
   // Simple 50/30/20 split
   const savingsPct = c.req.query("savingsPct") ? num(c, "savingsPct", 20) / 100 : undefined;
-  if (savingsPct !== undefined && (savingsPct < 0 || savingsPct > 1))
-    return err(c, 400, "invalid_savings_pct", "savingsPct must be between 0 and 100");
+  // 50/30/20 frame: savings above half of income would drive wants negative.
+  if (savingsPct !== undefined && (savingsPct < 0 || savingsPct > 0.5))
+    return err(c, 400, "invalid_savings_pct", "savingsPct must be between 0 and 50 (above 50% of income there is nothing left for wants)");
   return ok(c, budget(income, savingsPct));
 });
 
@@ -276,16 +303,35 @@ app.get("/salaries", async (c) => {
   let sql = "SELECT job_title, job_code, city, state, avg_salary, salary_10th, salary_25th, salary_median, salary_75th, salary_90th, national_avg, employment, rpp_all_items, median_rent, median_home_value, city_median_income, city_population FROM salary_data WHERE data_quality_score >= 6";
   const args: (string | number)[] = [];
   const clauses: string[] = [];
-  if (job) { clauses.push("job_title LIKE ?"); args.push(`%${job}%`); }
-  if (city) { clauses.push("city LIKE ?"); args.push(`%${city}%`); }
+  // %, _ and backslash in user input are literals, not wildcards: escape them
+  // and declare the escape char, so job=reg% cannot match every reg... title.
+  const likeLiteral = (s: string) => `%${s.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
+  if (job) { clauses.push("job_title LIKE ? ESCAPE '\\'"); args.push(likeLiteral(job)); }
+  if (city) { clauses.push("city LIKE ? ESCAPE '\\'"); args.push(likeLiteral(city)); }
   if (state) { clauses.push("state = ?"); args.push(state.toUpperCase()); }
   if (clauses.length) sql += " AND " + clauses.join(" AND ");
   sql += " ORDER BY avg_salary DESC LIMIT 100";
 
-  const { results } = await c.env.DB.prepare(sql).bind(...args).all();
+  let results: Record<string, unknown>[];
+  try {
+    ({ results } = await c.env.DB.prepare(sql).bind(...args).all<Record<string, unknown>>());
+  } catch {
+    // A D1 fault gets the JSON error envelope (503), never a plain-text 500
+    // page — mirrors the storage-failure shape in submissions.ts.
+    return err(c, 503, "db_error", "Could not read salary data. Try again shortly.");
+  }
   if (!results.length) return err(c, 404, "not_found", "No matching salary records");
   return ok(c, { count: results.length, records: results });
 });
+
+// ---------------------------------------------------------------------------
+// 10. /salaries/submit + /salaries/recent — community-reported salaries
+// (the user flywheel; see src/submissions.ts. Both are exempt from the auth
+// middleware above: anonymous browser traffic from kultranz.com by design.)
+// ---------------------------------------------------------------------------
+app.post("/salaries/submit", (c) => handleSubmit(c, c.env));
+app.get("/salaries/recent", (c) => handleRecent(c, c.env));
+app.post("/admin/submissions", (c) => handleAdmin(c, c.env));
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -300,7 +346,7 @@ function num(c: Context, key: string, fallback: number): number {
 function ok(c: Context, data: unknown) {
   return c.json({ data, meta: META });
 }
-function err(c: Context, status: 400 | 404, code: string, message: string) {
+function err(c: Context, status: 400 | 404 | 503, code: string, message: string) {
   return c.json({ error: { code, message } }, status);
 }
 

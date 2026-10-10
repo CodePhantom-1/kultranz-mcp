@@ -5,7 +5,11 @@ info:
   description: >
     US personal-finance data + calculators backed by real government sources
     (BLS OEWS, BEA Regional Price Parities, U.S. Census ACS, IRS 2026 brackets).
-    Free tier: 100 requests/day. No auth required — keys/metering handled by RapidAPI.
+    Access tiers: RapidAPI subscription (unlimited — keys/metering handled at the
+    proxy) · $5 lifetime license key via `Authorization: Bearer` / `X-Api-Key`
+    (unlimited) · anonymous free tier: 25 GET requests/day per hashed IP.
+    The MCP server (/mcp) needs no auth and allows 200 tool calls/day per
+    hashed IP.
   contact:
     name: Kultranz
     url: https://kultranz.com
@@ -453,8 +457,8 @@ paths:
       summary: Real salary data by job and/or city (BLS OEWS)
       parameters:
         - { name: job,   in: query, required: false, schema: { type: string }, example: "nurse" }
-        - { name: city,  in: query, required: false, schema: { type: string }, example: "Albuquerque, NM" }
-        - { name: state, in: query, required: false, schema: { type: string }, example: "CA" }
+        - { name: city,  in: query, required: false, schema: { type: string }, example: "Chicago" }
+        - { name: state, in: query, required: false, schema: { type: string }, example: "IL" }
       responses:
         "200":
           description: Up to 100 matching salary records with percentiles + city COL data
@@ -476,7 +480,7 @@ paths:
                         salary_90th: 107980.0
                         national_avg: 94480.0
                         employment: 102330
-                        rpp_all_items: null
+                        rpp_all_items: 103.595
                         median_rent: 1380.0
                         median_home_value: 315200.0
                         city_median_income: 75134.0
@@ -485,3 +489,106 @@ paths:
                       source: BLS OEWS + BEA RPP + U.S. Census ACS + IRS (via kultranz.com)
                       vintage: '2026'
                       year: 2026
+  /salaries/submit:
+    post:
+      summary: Submit a community salary report (anonymous)
+      description: >
+        Community flywheel: queued as status "pending"; only approved rows are
+        served by /salaries/recent. Spam defenses: honeypot fields (honeypot /
+        website) must be absent or empty, URLs in free text rejected. HTML
+        stripped. Rate limit: 5 submissions/day per hashed IP. Exempt from the
+        auth tiers — it exists for the kultranz.com salary pages.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [job_title, city, state, salary]
+              properties:
+                job_title: { type: string, description: 2..80 chars, example: "Software Engineer" }
+                city: { type: string, description: 2..80 chars, example: "Austin" }
+                state: { type: string, description: 2-letter code, example: "TX" }
+                salary: { type: number, description: "annual USD 1,000..5,000,000 ($ and commas ok)", example: 145000 }
+                years_experience: { type: number, description: 0..80, example: 5 }
+                title: { type: string, description: "optional, max 80 chars", example: "Senior" }
+                source: { type: string, description: 'must be "community" if present', example: "community" }
+                honeypot: { type: string, description: anti-spam — must be absent/empty }
+                website: { type: string, description: anti-spam — must be absent/empty }
+      responses:
+        "201":
+          description: Stored pending moderation
+          content:
+            application/json:
+              example: { data: { id: 1, status: "pending" } }
+        "400": { description: Validation or spam reject (error envelope) }
+        "429": { description: Over 5 submissions/day per hashed IP }
+        "503": { description: Storage unavailable }
+  /salaries/recent:
+    get:
+      summary: Approved community salary submissions (newest first)
+      description: APPROVED rows only — pending/rejected never served. ip_hash never returned.
+      parameters:
+        - { name: job,   in: query, required: false, schema: { type: string }, example: "Software Engineer" }
+        - { name: city,  in: query, required: false, schema: { type: string }, example: "Austin" }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 10, maximum: 50 }, example: "10" }
+      responses:
+        "200":
+          description: Matching approved submissions (job and/or city required)
+          content:
+            application/json:
+              example:
+                data:
+                  count: 1
+                  submissions:
+                  - job_title: Software Engineer
+                    city: Austin
+                    state: TX
+                    salary: 150000
+                    years_experience: 5
+                    title: null
+                    posted_at: "2026-10-01T12:00:00.000Z"
+  /billing/buy:
+    get:
+      summary: 302 to a freshly minted Polar checkout — $5 lifetime license key
+      description: >
+        No auth, deliberately reachable when the free tier is exhausted (the
+        429 bodies link here). Checkout sessions expire after 24h, so one is
+        minted per request; nothing is cached or reused.
+      responses:
+        "302": { description: Redirect to checkout.polar.sh }
+        "502": { description: Polar checkout error }
+        "503": { description: Billing not configured (POLAR_* secrets unset) }
+  /mcp:
+    post:
+      summary: Remote MCP server (Streamable HTTP, stateless)
+      description: >
+        JSON-RPC 2.0 over POST (Content-Type application/json). Methods:
+        initialize, ping, tools/list, tools/call. Five tools:
+        get_take_home_pay, compare_cost_of_living, get_tax_brackets,
+        list_metros, get_salary_percentiles. Auth: none (optional MCP_API_KEY
+        via Authorization Bearer when set). Rate limit: 200 tool calls/day per
+        hashed IP — initialize, ping and tools/list are free. Batches (legacy
+        clients) capped at 16 entries; larger → -32600.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: { }, clientInfo: { name: "curl", version: "0" } } }
+      responses:
+        "200":
+          description: One JSON-RPC response object (an array for batches)
+          content:
+            application/json:
+              example:
+                jsonrpc: "2.0"
+                id: 1
+                result:
+                  protocolVersion: "2025-06-18"
+                  capabilities: { tools: { listChanged: false } }
+                  serverInfo: { name: "kultranz", title: "Kultranz US Salary & Cost of Living", version: "1.0.0" }
+        "400": { description: Parse error / invalid request / oversized batch (-32700 / -32600) }
+        "401": { description: MCP_API_KEY is set and the credential is missing/wrong }
+        "405": { description: GET/DELETE — stateless server, POST only }
+        "415": { description: Content-Type is not application/json }
+        "429": { description: Over 200 tool calls/day per hashed IP (JSON-RPC -32002) }

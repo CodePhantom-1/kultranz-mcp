@@ -1,7 +1,12 @@
 # Kultranz MCP Server — US Salary, Tax & Cost of Living
 
+[![Glama MCP Score](https://glama.ai/mcp/servers/CodePhantom-1/kultranz-mcp/badges/score.svg)](https://glama.ai/mcp/servers/CodePhantom-1/kultranz-mcp)
+[![Smithery](https://img.shields.io/badge/Smithery-listed-blue)](https://smithery.ai/servers/cianot978/kultranz)
+[![TensorBlock](https://img.shields.io/badge/TensorBlock-listed-blue)](https://github.com/TensorBlock/awesome-mcp-servers)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+
 Remote MCP server (Streamable HTTP) + REST API over real US government data.
-**Live endpoint: https://api.kultranz.com/mcp** — free, no auth, no quota.
+**Live endpoint: https://api.kultranz.com/mcp** — no auth, no API key. The free tier is metered: **200 tool calls/day per IP** (`initialize`, `ping` and `tools/list` are never metered; JSON-RPC batches are capped at 16 entries).
 
 Five read-only tools a model cannot compute itself:
 
@@ -15,10 +20,37 @@ Five read-only tools a model cannot compute itself:
 
 ## Use it
 
-Any MCP client (Claude, Cursor, Windsurf, Claude Code):
+Any MCP client that speaks Streamable HTTP (Claude Desktop, Claude Code, Cursor, Windsurf):
+
 ```
 claude mcp add --transport http kultranz https://api.kultranz.com/mcp
 ```
+
+Or in a client's JSON config:
+
+```json
+{
+  "mcpServers": {
+    "kultranz": { "url": "https://api.kultranz.com/mcp" }
+  }
+}
+```
+
+Stateless server: plain `POST https://api.kultranz.com/mcp` with JSON-RPC 2.0 works from curl or fetch, no session required.
+
+## Pricing
+
+| Surface | Free tier | Paid |
+|---|---|---|
+| MCP (`/mcp`) | 200 tool calls/day per IP, no key | — |
+| REST API | 25 requests/day | [$5 lifetime key](https://kultranz.com/pages/api-docs/): no rate limit, no RapidAPI requirement |
+| RapidAPI | — | [Pro / Ultra / Mega tiers](https://rapidapi.com/cianot978/api/kultranz), gated by the RapidAPI proxy secret |
+
+Docs and full pricing: https://kultranz.com/pages/api-docs/
+
+## What is in this repo
+
+A complete, deployable Cloudflare Worker: the MCP server, the REST API it shares a codebase with, the D1 schema + seed (50 metros, 51 tax jurisdictions, salary percentiles), the community salary-submission flywheel (`src/submissions.ts` + moderation script in `scripts/`), and a 206-test vitest suite (`npm test`).
 
 ## Run your own
 
