@@ -18,6 +18,12 @@ Five read-only tools a model cannot compute itself:
 | `list_metros` | The 50 supported metros: price index, median rent, home value, household income |
 | `get_salary_percentiles` | BLS OEWS annual wages, 10th–90th percentile spread, by occupation × metro |
 
+## Why this exists
+
+Ask five paycheck calculators what $85,000 nets in Missouri and you will get five answers, because three 2026 state schedules are widely mis-modeled: Missouri is graduated (0 to 4.7% starting above $9,436, not flat), Mississippi charges 0% on the first $10,000, and Ohio taxes nothing below $26,050. All three were corrected on 2026-10-09 against the state Departments of Revenue, and everything behind the fix is open: the datasets (CC BY 4.0), the D1 seed, and this server.
+
+The bar this repo holds itself to: if a number cannot be traced to a named release (BLS OEWS, BEA RPP, Census ACS, IRS Rev. Proc. 2025-32, or a state DOR form), it does not ship. Corrections are applied fast: open an issue with the source and we fix the data, not the marketing.
+
 ## Use it
 
 Any MCP client that speaks Streamable HTTP (Claude Desktop, Claude Code, Cursor, Windsurf):
