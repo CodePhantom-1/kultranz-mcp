@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Remote MCP server (Streamable HTTP) + REST API over real US government data.
-**Live endpoint: https://api.kultranz.com/mcp** — no auth, no API key. The free tier is metered: **200 tool calls/day per IP** (`initialize`, `ping` and `tools/list` are never metered; JSON-RPC batches are capped at 16 entries).
+**Live endpoint: https://api.kultranz.com/mcp** — no auth, no API key. The free tier is metered: **200 tool calls/day per IP**, or **5,000/day per IP for ChatGPT and Claude**, whose users share a small pool of egress IPs (`initialize`, `ping` and `tools/list` are never metered; JSON-RPC batches are capped at 16 entries). Browser-origin requests from sites other than the major MCP clients get a 403, per the MCP transport spec. Also listed in the [official MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=kultranz) as `io.github.CodePhantom-1/kultranz-mcp`.
 
 Five read-only tools a model cannot compute itself:
 
