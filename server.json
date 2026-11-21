@@ -1,0 +1,27 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.CodePhantom-1/kultranz-mcp",
+  "title": "Kultranz: US Salary, Tax & Cost of Living",
+  "description": "US take-home pay, 2026 tax brackets, BLS wages by job and city, and cost of living across 50 metros.",
+  "version": "1.0.0",
+  "websiteUrl": "https://kultranz.com/pages/api-docs/",
+  "repository": {
+    "url": "https://github.com/CodePhantom-1/kultranz-mcp",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://api.kultranz.com/mcp"
+    }
+  ],
+  "icons": [
+    {
+      "src": "https://kultranz.com/icon-512.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "512x512"
+      ]
+    }
+  ]
+}
