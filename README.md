@@ -48,8 +48,8 @@ Stateless server: plain `POST https://api.kultranz.com/mcp` with JSON-RPC 2.0 wo
 
 | Surface | Free tier | Paid |
 |---|---|---|
-| MCP (`/mcp`) | 200 tool calls/day per IP, no key | — |
-| REST API | 25 requests/day | [$5 lifetime key](https://kultranz.com/pages/api-docs/?utm_source=github&utm_medium=organic&utm_campaign=revtest-oct): no rate limit, no RapidAPI requirement |
+| MCP (`/mcp`) | 200 tool calls/day per IP (5,000 for ChatGPT and Claude), no key | — |
+| REST API | 10 requests/day | [$5 lifetime key](https://kultranz.com/pages/api-docs/?utm_source=github&utm_medium=organic&utm_campaign=revtest-oct): no rate limit, no RapidAPI requirement |
 | RapidAPI | — | [Pro / Ultra / Mega tiers](https://rapidapi.com/cianot978/api/kultranz?utm_source=github&utm_medium=organic&utm_campaign=revtest-oct), gated by the RapidAPI proxy secret |
 
 Docs and full pricing: https://kultranz.com/pages/api-docs/?utm_source=github&utm_medium=organic&utm_campaign=revtest-oct
